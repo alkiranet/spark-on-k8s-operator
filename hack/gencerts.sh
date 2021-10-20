@@ -24,58 +24,58 @@ function usage {
   Usage: $SCRIPT
   Options:
   -h | --help                    Display help information.
-  -n | --namespace <namespace>   The namespace where the Spark operator is installed.			
+  -n | --namespace <namespace>   The namespace where the Spark operator is installed.
   -s | --service <service>       The name of the webhook service.
   -p | --in-pod                  Whether the script is running inside a pod or not.
 EOF
 }
 
 function parse_arguments {
-  while [[ $# -gt 0 ]]
-  do
-    case "$1" in
-      -n|--namespace)
-      if [[ -n "$2" ]]; then
-        NAMESPACE="$2"
-      else
-        echo "-n or --namespace requires a value."
-        exit 1
-      fi
-      shift 2
-      continue
-      ;;
-      -s|--service)
-      if [[ -n "$2" ]]; then
-        SERVICE="$2"
-      else
-        echo "-s or --service requires a value."
-        exit 1
-      fi
-      shift 2
-      continue
-      ;;
-      -p|--in-pod)
-      export IN_POD=true
-      shift 1
-      continue
-      ;;
-      -h|--help)
-      usage
-      exit 0
-      ;;
-      --)              # End of all options.
-        shift
-        break
-      ;;
-      '')              # End of all options.
-        break
-      ;;
-      *)
-        echo "Unrecognized option: $1"
-        exit 1
-      ;;
-    esac
-  done
+    while [[ $# -gt 0 ]]
+    do
+        case "$1" in
+            -n|--namespace)
+                if [[ -n "$2" ]]; then
+                    NAMESPACE="$2"
+                else
+                    echo "-n or --namespace requires a value."
+                    exit 1
+                fi
+                shift 2
+                continue
+            ;;
+            -s|--service)
+                if [[ -n "$2" ]]; then
+                    SERVICE="$2"
+                else
+                    echo "-s or --service requires a value."
+                    exit 1
+                fi
+                shift 2
+                continue
+            ;;
+            -p|--in-pod)
+                export IN_POD=true
+                shift 1
+                continue
+            ;;
+            -h|--help)
+                usage
+                exit 0
+            ;;
+            --)              # End of all options.
+                shift
+                break
+            ;;
+            '')              # End of all options.
+                break
+            ;;
+            *)
+                echo "Unrecognized option: $1"
+                exit 1
+            ;;
+        esac
+    done
 }
 
 # Set the namespace to "sparkoperator" by default if not provided.
@@ -98,13 +98,14 @@ distinguished_name = req_distinguished_name
 basicConstraints = CA:FALSE
 keyUsage = nonRepudiation, digitalSignature, keyEncipherment
 extendedKeyUsage = clientAuth, serverAuth
+subjectAltName = DNS:${SERVICE}.${NAMESPACE}.svc
 EOF
 
 # Create a certificate authority.
 touch ${TMP_DIR}/.rnd
 export RANDFILE=${TMP_DIR}/.rnd
 openssl genrsa -out ${TMP_DIR}/ca-key.pem 2048
-openssl req -x509 -new -nodes -key ${TMP_DIR}/ca-key.pem -days 100000 -out ${TMP_DIR}/ca-cert.pem -subj "/CN=${SERVICE}_ca"
+openssl req -x509 -new -nodes -key ${TMP_DIR}/ca-key.pem -days 100000 -out ${TMP_DIR}/ca-cert.pem -subj "/CN=${SERVICE}.${NAMESPACE}.svc"
 
 # Create a server certificate.
 openssl genrsa -out ${TMP_DIR}/server-key.pem 2048
@@ -113,24 +114,24 @@ openssl req -new -key ${TMP_DIR}/server-key.pem -out ${TMP_DIR}/server.csr -subj
 openssl x509 -req -in ${TMP_DIR}/server.csr -CA ${TMP_DIR}/ca-cert.pem -CAkey ${TMP_DIR}/ca-key.pem -CAcreateserial -out ${TMP_DIR}/server-cert.pem -days 100000 -extensions v3_req -extfile ${TMP_DIR}/server.conf
 
 if [[ "$IN_POD" == "true" ]];  then
-  TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-
-  # Base64 encode secrets and then remove the trailing newline to avoid issues in the curl command
-  ca_cert=$(cat ${TMP_DIR}/ca-cert.pem | base64 | tr -d '\n')
-  ca_key=$(cat ${TMP_DIR}/ca-key.pem | base64 | tr -d '\n')
-  server_cert=$(cat ${TMP_DIR}/server-cert.pem | base64 | tr -d '\n')
-  server_key=$(cat ${TMP_DIR}/server-key.pem | base64 | tr -d '\n')
-
-  # Create the secret resource
-  echo "Creating a secret for the certificate and keys"
-  STATUS=$(curl -ik \
-	  -o ${TMP_DIR}/output \
-	  -w "%{http_code}" \
-	  -X POST \
-	  -H "Authorization: Bearer $TOKEN" \
-	  -H 'Accept: application/json' \
-	  -H 'Content-Type: application/json' \
-	  -d '{
+    TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+    
+    # Base64 encode secrets and then remove the trailing newline to avoid issues in the curl command
+    ca_cert=$(cat ${TMP_DIR}/ca-cert.pem | base64 | tr -d '\n')
+    ca_key=$(cat ${TMP_DIR}/ca-key.pem | base64 | tr -d '\n')
+    server_cert=$(cat ${TMP_DIR}/server-cert.pem | base64 | tr -d '\n')
+    server_key=$(cat ${TMP_DIR}/server-key.pem | base64 | tr -d '\n')
+    
+    # Create the secret resource
+    echo "Creating a secret for the certificate and keys"
+    STATUS=$(curl -ik \
+        -o ${TMP_DIR}/output \
+        -w "%{http_code}" \
+        -X POST \
+        -H "Authorization: Bearer $TOKEN" \
+        -H 'Accept: application/json' \
+        -H 'Content-Type: application/json' \
+        -d '{
 	  "kind": "Secret",
 	  "apiVersion": "v1",
 	  "metadata": {
@@ -143,25 +144,25 @@ if [[ "$IN_POD" == "true" ]];  then
 	    "server-cert.pem": "'"$server_cert"'",
 	    "server-key.pem": "'"$server_key"'"
 	  }
-	}' \
-	https://kubernetes.default.svc/api/v1/namespaces/${NAMESPACE}/secrets)
-
-  cat ${TMP_DIR}/output
-
-  case "$STATUS" in
-    201)
-      printf "\nSuccess - secret created.\n"
-    ;;
-    409)
-      printf "\nSuccess - secret already exists.\n"
-     ;;
-     *)
-      printf "\nFailed creating secret.\n"
-      exit 1
-     ;;
-  esac
+        }' \
+    https://kubernetes.default.svc/api/v1/namespaces/${NAMESPACE}/secrets)
+    
+    cat ${TMP_DIR}/output
+    
+    case "$STATUS" in
+        201)
+            printf "\nSuccess - secret created.\n"
+        ;;
+        409)
+            printf "\nSuccess - secret already exists.\n"
+        ;;
+        *)
+            printf "\nFailed creating secret.\n"
+            exit 1
+        ;;
+    esac
 else
-  kubectl create secret --namespace=${NAMESPACE} generic spark-webhook-certs --from-file=${TMP_DIR}/ca-key.pem --from-file=${TMP_DIR}/ca-cert.pem --from-file=${TMP_DIR}/server-key.pem --from-file=${TMP_DIR}/server-cert.pem
+    kubectl create secret --namespace=${NAMESPACE} generic spark-webhook-certs --from-file=${TMP_DIR}/ca-key.pem --from-file=${TMP_DIR}/ca-cert.pem --from-file=${TMP_DIR}/server-key.pem --from-file=${TMP_DIR}/server-cert.pem
 fi
 
 # Clean up after we're done.
